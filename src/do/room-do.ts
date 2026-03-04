@@ -1,9 +1,9 @@
 import type {
-  ApplyMoveRequest,
-  ApplyMoveResult,
   ClientEvent,
+  FinishedPayload,
   GameState,
   PlayerSlot,
+  ProtocolErrorCode,
   ServerEvent
 } from "../domain/messages";
 
@@ -15,6 +15,7 @@ type RoomSession = {
 
 export class RoomDO {
   private readonly sessions = new Map<string, RoomSession>();
+  private lastMoveBy: PlayerSlot = "P2";
 
   private readonly state: GameState = {
     roomId: "",
@@ -65,7 +66,8 @@ export class RoomDO {
         const msg = JSON.parse(String(event.data)) as ClientEvent;
         this.onClientEvent(playerId, msg);
       } catch {
-        this.sendTo(playerId, { type: "error", message: "Invalid JSON message" });
+        const protocolError: ServerEvent = { type: "error", code: "BAD_REQUEST", message: "Invalid JSON message" };
+        this.sendTo(playerId, protocolError);
       }
     });
 
@@ -73,12 +75,13 @@ export class RoomDO {
       this.sessions.delete(playerId);
     });
 
-    this.sendState(playerId);
+    this.sendSnapshot(playerId);
   }
 
   private onClientEvent(playerId: string, event: ClientEvent): void {
     if (event.type === "ping") {
-      this.sendTo(playerId, { type: "pong" });
+      const pong: ServerEvent = { type: "pong" };
+      this.sendTo(playerId, pong);
       return;
     }
 
@@ -89,65 +92,95 @@ export class RoomDO {
       }
       session.slot = event.slot ?? session.slot ?? this.firstFreeSlot();
       if (!session.slot) {
-        this.sendTo(playerId, { type: "error", message: "Room is full" });
+        const roomFull: ServerEvent = { type: "error", code: "ROOM_FULL", message: "Room is full" };
+        this.sendTo(playerId, roomFull);
         return;
       }
-      this.sendState(playerId);
+      this.sendWelcome(playerId, session.slot);
       return;
     }
 
-    if (event.type === "apply_move") {
-      this.handleApplyMove(playerId, event.payload);
+    if (event.type === "move") {
+      this.handleMove(playerId, event.seq, event.move);
     }
   }
 
-  private handleApplyMove(playerId: string, req: ApplyMoveRequest): void {
+  private handleMove(playerId: string, seq: number | undefined, move: { fromRow: number; fromCol: number; toRow: number; toCol: number }): void {
     const session = this.sessions.get(playerId);
     const slot = session?.slot;
     if (!slot) {
-      this.sendRejected(playerId, "UNAUTHORIZED", "Join room first (slot required).");
+      this.sendProtocolError(playerId, "UNAUTHORIZED", "Join room first (slot required).");
       return;
     }
 
     if (this.state.finished) {
-      this.sendRejected(playerId, "ROOM_NOT_READY", "Game is already finished.");
+      this.sendProtocolError(playerId, "INVALID_MOVE", "Game is already finished.");
       return;
     }
 
     if (slot !== this.state.turn) {
-      this.sendRejected(playerId, "UNAUTHORIZED", "It is not this player's turn.");
+      this.sendProtocolError(playerId, "INVALID_MOVE", "It is not this player's turn.");
       return;
     }
 
-    if (req.seq !== this.state.seq) {
-      this.sendRejected(playerId, "INVALID_MOVE", `Expected seq ${this.state.seq}, got ${req.seq}.`);
+    if (seq !== undefined && seq !== this.state.seq) {
+      this.sendProtocolError(playerId, "INVALID_MOVE", `Expected seq ${this.state.seq}, got ${seq}.`);
       return;
     }
 
+    void move;
     this.state.seq += 1;
     this.state.turn = this.state.turn === "P1" ? "P2" : "P1";
-
-    const accepted: ApplyMoveResult = { accepted: true, state: this.state };
-    this.broadcast({ type: "move_accepted", payload: accepted });
-    this.broadcast({ type: "room_state", payload: this.state });
+    this.lastMoveBy = slot;
+    const stateEvent: ServerEvent = {
+      type: "state",
+      seq: this.state.seq,
+      state: this.state,
+      last_move_by: this.lastMoveBy,
+      finished: this.currentFinished()
+    };
+    this.broadcast(stateEvent);
   }
 
-  private sendRejected(
+  private sendProtocolError(
     playerId: string,
-    errorCode: "UNAUTHORIZED" | "ROOM_NOT_READY" | "INVALID_MOVE",
+    code: ProtocolErrorCode,
     message: string
   ): void {
-    const rejected: ApplyMoveResult = {
-      accepted: false,
-      errorCode,
-      message,
-      state: this.state
-    };
-    this.sendTo(playerId, { type: "move_rejected", payload: rejected });
+    const errorEvent: ServerEvent = { type: "error", code, message };
+    this.sendTo(playerId, errorEvent);
   }
 
-  private sendState(playerId: string): void {
-    this.sendTo(playerId, { type: "room_state", payload: this.state });
+  private sendWelcome(playerId: string, player: PlayerSlot): void {
+    const welcome: ServerEvent = {
+      type: "welcome",
+      room_id: this.state.roomId,
+      player,
+      seq: this.state.seq,
+      state: this.state
+    };
+    this.sendTo(playerId, welcome);
+  }
+
+  private sendSnapshot(playerId: string): void {
+    const snapshot: ServerEvent = {
+      type: "state",
+      seq: this.state.seq,
+      state: this.state,
+      last_move_by: this.lastMoveBy,
+      finished: this.currentFinished()
+    };
+    this.sendTo(playerId, snapshot);
+  }
+
+  private currentFinished(): FinishedPayload | undefined {
+    if (!this.state.finished) {
+      return undefined;
+    }
+    if (!this.state.winnerPlayerId) {
+      return { outcome: "Draw" };
+    }
+    return { outcome: "Winner", winner: this.state.winnerPlayerId };
   }
 
   private firstFreeSlot(): PlayerSlot | undefined {

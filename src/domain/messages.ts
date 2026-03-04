@@ -15,13 +15,11 @@ export type PieceSnapshot = {
     customTypeId: string;
 }
 
-export type ApplyMoveRequest = {
-    seq: number;
-    fromRow: number;
-    fromCol: number;
-    toRow: number;
-    toCol: number;
-}
+export type MoveMessage = {
+    type: "move";
+    seq?: number;
+    move: Move;
+};
 
 export type GameState = {
     roomId: string;
@@ -36,23 +34,30 @@ export type GameState = {
     legalMoves: Move[];
 };
 
-export type ApplyMoveResult = {
-    accepted: boolean;
-    errorCode?: "UNAUTHORIZED" | "ROOM_NOT_READY" | "INVALID_MOVE";
-    message?: string;
-    state: GameState;
+export type ProtocolErrorCode =
+    | "INVALID_MOVE"
+    | "UNAUTHORIZED"
+    | "ROOM_FULL"
+    | "ROOM_NOT_FOUND"
+    | "ROOM_NOT_READY"
+    | "BAD_REQUEST"
+    | "INTERNAL_ERROR"
+    | "UNSUPPORTED_MESSAGE";
+
+export type FinishedPayload = {
+    outcome: "Winner" | "Draw";
+    winner?: PlayerSlot;
 };
 
 export type ClientEvent =
     | { type: "join"; playerId: string; slot?: PlayerSlot }
-    | { type: "apply_move"; payload: ApplyMoveRequest }
+    | MoveMessage
     | { type: "ping" };
 
 export type ServerEvent =
-    | {type: "room_state"; payload: GameState }
-    | {type: "move_accepted"; payload: ApplyMoveResult}
-    | {type: "move_rejected"; payload: ApplyMoveResult}
-    | {type: "queued"}
-    | {type: "match_found"; roomId: string ; opponentId: string}
-    | {type: "pong"}
-    |{type: "error"; message: string };
+    | { type: "welcome"; room_id: string; player: PlayerSlot; seq: number; state: GameState }
+    | { type: "state"; seq: number; state: GameState; last_move_by: PlayerSlot; finished?: FinishedPayload }
+    | { type: "queued" }
+    | { type: "match_found"; roomId: string; opponentId: string }
+    | { type: "pong" }
+    | { type: "error"; code: ProtocolErrorCode; message: string };
