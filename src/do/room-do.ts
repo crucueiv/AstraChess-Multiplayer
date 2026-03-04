@@ -13,9 +13,19 @@ type RoomSession = {
   socket: WebSocket;
 };
 
+type RoomSnapshot = {
+  state: GameState;
+  lastMoveBy: PlayerSlot;
+};
+
+const SNAPSHOT_STORAGE_KEY = "room:snapshot";
+const SLOT_ASSIGNMENTS_STORAGE_KEY = "room:slotAssignments";
+
 export class RoomDO {
   private readonly sessions = new Map<string, RoomSession>();
+  private readonly slotAssignments = new Map<string, PlayerSlot>();
   private lastMoveBy: PlayerSlot = "P2";
+  private hydrated = false;
 
   private readonly state: GameState = {
     roomId: "",
@@ -33,6 +43,7 @@ export class RoomDO {
   constructor(private readonly durableState: DurableObjectState) {}
 
   async fetch(request: Request): Promise<Response> {
+    await this.ensureHydrated();
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
@@ -49,7 +60,10 @@ export class RoomDO {
     }
 
     const roomId = url.searchParams.get("roomId") ?? "room";
-    this.state.roomId = roomId;
+    if (this.state.roomId !== roomId) {
+      this.state.roomId = roomId;
+      void this.persistSnapshot();
+    }
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -90,12 +104,26 @@ export class RoomDO {
       if (!session) {
         return;
       }
-      session.slot = event.slot ?? session.slot ?? this.firstFreeSlot();
+      const requestedSlot = event.slot ?? session.slot ?? this.slotAssignments.get(playerId) ?? this.firstFreeSlot();
+      if (!requestedSlot) {
+        const roomFull: ServerEvent = { type: "error", code: "ROOM_FULL", message: "Room is full" };
+        this.sendTo(playerId, roomFull);
+        return;
+      }
+      const owner = this.ownerOfSlot(requestedSlot);
+      if (owner && owner !== playerId) {
+        const roomFull: ServerEvent = { type: "error", code: "ROOM_FULL", message: "Requested slot is occupied" };
+        this.sendTo(playerId, roomFull);
+        return;
+      }
+      session.slot = requestedSlot;
       if (!session.slot) {
         const roomFull: ServerEvent = { type: "error", code: "ROOM_FULL", message: "Room is full" };
         this.sendTo(playerId, roomFull);
         return;
       }
+      this.slotAssignments.set(playerId, session.slot);
+      void this.persistSlotAssignments();
       this.sendWelcome(playerId, session.slot);
       return;
     }
@@ -132,6 +160,7 @@ export class RoomDO {
     this.state.seq += 1;
     this.state.turn = this.state.turn === "P1" ? "P2" : "P1";
     this.lastMoveBy = slot;
+    void this.persistSnapshot();
     const stateEvent: ServerEvent = {
       type: "state",
       seq: this.state.seq,
@@ -185,16 +214,23 @@ export class RoomDO {
 
   private firstFreeSlot(): PlayerSlot | undefined {
     const used = new Set<PlayerSlot>();
-    for (const s of this.sessions.values()) {
-      if (s.slot) {
-        used.add(s.slot);
-      }
+    for (const assigned of this.slotAssignments.values()) {
+      used.add(assigned);
     }
     if (!used.has("P1")) {
       return "P1";
     }
     if (!used.has("P2")) {
       return "P2";
+    }
+    return undefined;
+  }
+
+  private ownerOfSlot(slot: PlayerSlot): string | undefined {
+    for (const [playerId, assignedSlot] of this.slotAssignments.entries()) {
+      if (assignedSlot === slot) {
+        return playerId;
+      }
     }
     return undefined;
   }
@@ -212,5 +248,44 @@ export class RoomDO {
     for (const session of this.sessions.values()) {
       session.socket.send(data);
     }
+  }
+
+  private async ensureHydrated(): Promise<void> {
+    if (this.hydrated) {
+      return;
+    }
+    await this.durableState.blockConcurrencyWhile(async () => {
+      if (this.hydrated) {
+        return;
+      }
+      const [snapshot, assignments] = await Promise.all([
+        this.durableState.storage.get<RoomSnapshot>(SNAPSHOT_STORAGE_KEY),
+        this.durableState.storage.get<Record<string, PlayerSlot>>(SLOT_ASSIGNMENTS_STORAGE_KEY)
+      ]);
+      if (snapshot) {
+        Object.assign(this.state, snapshot.state);
+        this.lastMoveBy = snapshot.lastMoveBy;
+      }
+      this.slotAssignments.clear();
+      if (assignments) {
+        for (const [playerId, slot] of Object.entries(assignments)) {
+          this.slotAssignments.set(playerId, slot);
+        }
+      }
+      this.hydrated = true;
+    });
+  }
+
+  private async persistSnapshot(): Promise<void> {
+    const snapshot: RoomSnapshot = {
+      state: this.state,
+      lastMoveBy: this.lastMoveBy
+    };
+    await this.durableState.storage.put(SNAPSHOT_STORAGE_KEY, snapshot);
+  }
+
+  private async persistSlotAssignments(): Promise<void> {
+    const data = Object.fromEntries(this.slotAssignments.entries());
+    await this.durableState.storage.put(SLOT_ASSIGNMENTS_STORAGE_KEY, data);
   }
 }

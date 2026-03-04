@@ -21,6 +21,16 @@ export default {
       const stub = env.MATCHMAKING_DO.get(id);
       return stub.fetch("https://do.internal/join", request);
     }
+    if (url.pathname === "/matchmaking/cancel" && request.method === "POST") {
+      const id = env.MATCHMAKING_DO.idFromName("global-queue");
+      const stub = env.MATCHMAKING_DO.get(id);
+      return stub.fetch("https://do.internal/cancel", request);
+    }
+    if (url.pathname === "/matchmaking/rematch" && request.method === "POST") {
+      const id = env.MATCHMAKING_DO.idFromName("global-queue");
+      const stub = env.MATCHMAKING_DO.get(id);
+      return stub.fetch("https://do.internal/rematch", request);
+    }
 
     if (url.pathname.startsWith("/room/")) {
       const roomId = url.pathname.replace("/room/", "");

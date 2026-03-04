@@ -22,6 +22,7 @@ Cloudflare Workers + Durable Objects backend scaffold for AstraChess multiplayer
 - Server emits: `welcome`, `state`, `pong`, `error`
 - Error envelope: `{ type: "error", code: "INVALID_MOVE" | "UNAUTHORIZED" | ..., message }`
 - Current authoritative checks: player joined, turn ownership, optional `seq` match, room not finished
+- Room persistence/recovery: `RoomDO` persists room snapshot and player-slot ownership, and restores slot on reconnect by `playerId`
 
 ## Commands
 
@@ -29,6 +30,15 @@ Cloudflare Workers + Durable Objects backend scaffold for AstraChess multiplayer
 npm install
 npm run dev
 ```
+
+## Matchmaking endpoints
+
+- `POST /matchmaking/join` body `{ playerId, requestId? }`
+  - Returns queued metadata (`requestId`, `expiresAt`, `timeoutMs`) or a match (`roomId`, `players`)
+- `POST /matchmaking/cancel` body `{ playerId, requestId? }`
+  - Returns `cancelled`, `timed_out`, or `not_found` status
+- `POST /matchmaking/rematch` body `{ roomId, playerId, requestId? }`
+  - Returns waiting metadata or a matched rematch room
 
 ### Build/type-check
 
@@ -61,7 +71,7 @@ Manual websocket smoke test:
 - [x] Align message contracts with `crucueiv/AstraChess` for room state and move request shape
 - [x] Implement initial authoritative room command handling (turn/seq/finished checks)
 - [x] Align remaining contracts with `serg-cs/versus-arcade`
-- [ ] Expand matchmaking (timeout, cancel, rematch)
-- [ ] Add persistence/recovery strategy for rooms and players
+- [x] Expand matchmaking (timeout, cancel, rematch)
+- [x] Add persistence/recovery strategy for rooms and players
 - [ ] Add automated tests for Durable Objects behavior
 - [ ] Add auth/reconnect and observability
