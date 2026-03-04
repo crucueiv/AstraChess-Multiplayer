@@ -29,6 +29,7 @@ Cloudflare Workers + Durable Objects backend scaffold for AstraChess multiplayer
 ```bash
 npm install
 npm run dev
+npm test
 ```
 
 ## Matchmaking endpoints
@@ -54,7 +55,13 @@ npm run deploy
 
 ### Test
 
-There is no test suite yet in this scaffold.
+Automated tests:
+
+```bash
+npm test
+```
+
+Current coverage includes Durable Object behavior for matchmaking and room reconnect persistence.
 
 Manual websocket smoke test:
 
@@ -66,6 +73,14 @@ Manual websocket smoke test:
 - Click `Join`, then `Move`
 - Verify server frames include `welcome`/`state` and typed `error` envelopes when rejected
 
+## Auth and observability
+
+- Protected routes (`/matchmaking/*`, `/room/*`) require `x-api-key` matching Worker `API_KEY`.
+- `/health` remains public.
+- Structured logs are emitted for matchmaking and room lifecycle events.
+- Room and matchmaking `/health` responses include basic counters.
+- Configure key locally via `.dev.vars` (`API_KEY=...`) and in production via `wrangler secret put API_KEY`.
+
 ## Next TODOs
 
 - [x] Align message contracts with `crucueiv/AstraChess` for room state and move request shape
@@ -73,5 +88,11 @@ Manual websocket smoke test:
 - [x] Align remaining contracts with `serg-cs/versus-arcade`
 - [x] Expand matchmaking (timeout, cancel, rematch)
 - [x] Add persistence/recovery strategy for rooms and players
-- [ ] Add automated tests for Durable Objects behavior
-- [ ] Add auth/reconnect and observability
+- [x] Add automated tests for Durable Objects behavior
+- [x] Add auth/reconnect and observability
+
+## Post-TypeScript TODOs
+
+- [ ] Stabilize HTTP/WebSocket contracts (versioning + frontend integration)
+- [ ] Add CI/CD pipeline (typecheck + tests + preview deploy)
+- [ ] Add load/resilience validation for Durable Objects contention and reconnect storms

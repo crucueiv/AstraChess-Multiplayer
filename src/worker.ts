@@ -6,6 +6,7 @@ export { MatchmakingDO, RoomDO };
 type Env = {
   MATCHMAKING_DO: DurableObjectNamespace;
   ROOM_DO: DurableObjectNamespace;
+  API_KEY?: string;
 };
 
 export default {
@@ -14,6 +15,13 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "astrachess-multiplayer-backend" });
+    }
+
+    if (url.pathname.startsWith("/matchmaking/") || url.pathname.startsWith("/room/")) {
+      const authError = authorize(request, env);
+      if (authError) {
+        return authError;
+      }
     }
 
     if (url.pathname === "/matchmaking/join" && request.method === "POST") {
@@ -46,3 +54,14 @@ export default {
     return new Response("Not found", { status: 404 });
   }
 };
+
+function authorize(request: Request, env: Env): Response | null {
+  if (!env.API_KEY) {
+    return Response.json({ error: "API_KEY is not configured" }, { status: 500 });
+  }
+  const apiKey = request.headers.get("x-api-key");
+  if (apiKey !== env.API_KEY) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
