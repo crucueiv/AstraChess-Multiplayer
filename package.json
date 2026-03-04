@@ -3,13 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "dev": "npm run api:dev",
+    "deploy": "npm run api:deploy",
+    "api:dev": "wrangler dev",
+    "api:deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build",
+    "web:preview": "npm --prefix apps/web run preview"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260303.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.2",
     "wrangler": "^4.5.0"
   }

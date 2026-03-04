@@ -26,6 +26,10 @@ export class RoomDO {
   private readonly slotAssignments = new Map<string, PlayerSlot>();
   private lastMoveBy: PlayerSlot = "P2";
   private hydrated = false;
+  private joinCount = 0;
+  private moveCount = 0;
+  private reconnectCount = 0;
+  private protocolErrorCount = 0;
 
   private readonly state: GameState = {
     roomId: "",
@@ -47,7 +51,17 @@ export class RoomDO {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return Response.json({ ok: true, clients: this.sessions.size, seq: this.state.seq });
+      return Response.json({
+        ok: true,
+        clients: this.sessions.size,
+        seq: this.state.seq,
+        counters: {
+          join: this.joinCount,
+          move: this.moveCount,
+          reconnect: this.reconnectCount,
+          protocolError: this.protocolErrorCount
+        }
+      });
     }
 
     if (request.headers.get("Upgrade") !== "websocket") {
@@ -100,9 +114,14 @@ export class RoomDO {
     }
 
     if (event.type === "join") {
+      this.joinCount += 1;
       const session = this.sessions.get(playerId);
       if (!session) {
         return;
+      }
+      const isReconnect = !session.slot && this.slotAssignments.has(playerId);
+      if (isReconnect) {
+        this.reconnectCount += 1;
       }
       const requestedSlot = event.slot ?? session.slot ?? this.slotAssignments.get(playerId) ?? this.firstFreeSlot();
       if (!requestedSlot) {
@@ -124,11 +143,14 @@ export class RoomDO {
       }
       this.slotAssignments.set(playerId, session.slot);
       void this.persistSlotAssignments();
+      this.log("join", { playerId, slot: session.slot, reconnect: isReconnect });
       this.sendWelcome(playerId, session.slot);
       return;
     }
 
     if (event.type === "move") {
+      this.moveCount += 1;
+      this.log("move", { playerId, seq: event.seq ?? null });
       this.handleMove(playerId, event.seq, event.move);
     }
   }
@@ -176,6 +198,8 @@ export class RoomDO {
     code: ProtocolErrorCode,
     message: string
   ): void {
+    this.protocolErrorCount += 1;
+    this.log("error", { playerId, code, message });
     const errorEvent: ServerEvent = { type: "error", code, message };
     this.sendTo(playerId, errorEvent);
   }
@@ -287,5 +311,9 @@ export class RoomDO {
   private async persistSlotAssignments(): Promise<void> {
     const data = Object.fromEntries(this.slotAssignments.entries());
     await this.durableState.storage.put(SLOT_ASSIGNMENTS_STORAGE_KEY, data);
+  }
+
+  private log(event: "join" | "move" | "error", data: Record<string, unknown>): void {
+    console.log(JSON.stringify({ component: "room", roomId: this.state.roomId, event, ...data }));
   }
 }
