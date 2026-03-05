@@ -20,6 +20,11 @@ export default {
     const url = new URL(request.url);
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
     const protocolVersion = env.PROTOCOL_VERSION ?? PROTOCOL_VERSION;
+    const origin = request.headers.get("origin");
+
+    if (request.method === "OPTIONS") {
+      return withMeta(new Response(null, { status: 204 }), requestId, protocolVersion, origin);
+    }
 
     if (url.pathname === "/health") {
       return withMeta(
@@ -29,46 +34,53 @@ export default {
           protocolVersion
         }),
         requestId,
-        protocolVersion
+        protocolVersion,
+        origin
       );
     }
 
     if (url.pathname === "/auth/session" && request.method === "POST") {
       if (!env.API_KEY || request.headers.get("x-api-key") !== env.API_KEY) {
-        return withMeta(Response.json({ error: "Unauthorized" }, { status: 401 }), requestId, protocolVersion);
+        return withMeta(Response.json({ error: "Unauthorized" }, { status: 401 }), requestId, protocolVersion, origin);
       }
-      if (!env.SESSION_TOKEN_SECRET) {
-        return withMeta(Response.json({ error: "SESSION_TOKEN_SECRET is not configured" }, { status: 500 }), requestId, protocolVersion);
+      const sessionSecret = resolveSessionSecret(env);
+      if (!sessionSecret) {
+        return withMeta(Response.json({ error: "SESSION_TOKEN_SECRET or API_KEY must be configured" }, { status: 500 }), requestId, protocolVersion, origin);
       }
       const body = (await request.json()) as Partial<{ playerId: string; ttlSeconds: number }>;
       if (!body.playerId) {
-        return withMeta(Response.json({ error: "playerId is required" }, { status: 400 }), requestId, protocolVersion);
+        return withMeta(Response.json({ error: "playerId is required" }, { status: 400 }), requestId, protocolVersion, origin);
       }
-      const token = await issueSessionToken(body.playerId, env.SESSION_TOKEN_SECRET, body.ttlSeconds ?? 3600);
-      return withMeta(Response.json({ token, protocolVersion }), requestId, protocolVersion);
+      const token = await issueSessionToken(body.playerId, sessionSecret, body.ttlSeconds ?? 3600);
+      return withMeta(Response.json({ token, protocolVersion }), requestId, protocolVersion, origin);
     }
 
     if (url.pathname.startsWith("/matchmaking/") || url.pathname.startsWith("/room/")) {
       const authError = await authorize(request, env);
       if (authError) {
-        return withMeta(authError, requestId, protocolVersion);
+        return withMeta(authError, requestId, protocolVersion, origin);
       }
     }
 
     if (url.pathname === "/matchmaking/join" && request.method === "POST") {
       const id = env.MATCHMAKING_DO.idFromName("global-queue");
       const stub = env.MATCHMAKING_DO.get(id);
-      return withMeta(await stub.fetch("https://do.internal/join", request), requestId, protocolVersion);
+      return withMeta(await stub.fetch("https://do.internal/join", request), requestId, protocolVersion, origin);
     }
     if (url.pathname === "/matchmaking/cancel" && request.method === "POST") {
       const id = env.MATCHMAKING_DO.idFromName("global-queue");
       const stub = env.MATCHMAKING_DO.get(id);
-      return withMeta(await stub.fetch("https://do.internal/cancel", request), requestId, protocolVersion);
+      return withMeta(await stub.fetch("https://do.internal/cancel", request), requestId, protocolVersion, origin);
     }
     if (url.pathname === "/matchmaking/rematch" && request.method === "POST") {
       const id = env.MATCHMAKING_DO.idFromName("global-queue");
       const stub = env.MATCHMAKING_DO.get(id);
-      return withMeta(await stub.fetch("https://do.internal/rematch", request), requestId, protocolVersion);
+      return withMeta(await stub.fetch("https://do.internal/rematch", request), requestId, protocolVersion, origin);
+    }
+    if (url.pathname === "/matchmaking/status" && request.method === "GET") {
+      const id = env.MATCHMAKING_DO.idFromName("global-queue");
+      const stub = env.MATCHMAKING_DO.get(id);
+      return withMeta(await stub.fetch(`https://do.internal/status${url.search}`, request), requestId, protocolVersion, origin);
     }
 
     if (url.pathname.startsWith("/room/")) {
@@ -82,39 +94,45 @@ export default {
       return stub.fetch(`https://do.internal${roomPath}`, request);
     }
 
-    return withMeta(new Response("Not found", { status: 404 }), requestId, protocolVersion);
+    return withMeta(new Response("Not found", { status: 404 }), requestId, protocolVersion, origin);
   }
 };
 
 async function authorize(request: Request, env: Env): Promise<Response | null> {
-  if (!env.API_KEY) {
-    return Response.json({ error: "API_KEY is not configured" }, { status: 500 });
-  }
-  const apiKey = request.headers.get("x-api-key");
-  if (apiKey === env.API_KEY) {
-    return null;
-  }
   const auth = request.headers.get("authorization");
-  const token = auth?.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
-  if (token && env.SESSION_TOKEN_SECRET) {
-    const verified = await verifySessionToken(token, env.SESSION_TOKEN_SECRET);
-    if (verified.ok) {
-      return null;
-    }
+  const url = new URL(request.url);
+  const tokenFromHeader = auth?.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+  const tokenFromQuery = url.searchParams.get("access_token") ?? "";
+  const token = tokenFromHeader || tokenFromQuery;
+  const sessionSecret = resolveSessionSecret(env);
+  if (!sessionSecret) {
+    return Response.json({ error: "SESSION_TOKEN_SECRET or API_KEY must be configured" }, { status: 500 });
   }
-  if (apiKey !== env.API_KEY) {
+  if (!token) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const verified = await verifySessionToken(token, sessionSecret);
+  if (!verified.ok) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
 }
 
-function withMeta(response: Response, requestId: string, protocolVersion: string): Response {
+function withMeta(response: Response, requestId: string, protocolVersion: string, origin?: string | null): Response {
   const headers = new Headers(response.headers);
   headers.set("x-request-id", requestId);
   headers.set("x-protocol-version", protocolVersion);
+  headers.set("access-control-allow-origin", origin ?? "*");
+  headers.set("access-control-allow-methods", "GET,POST,OPTIONS");
+  headers.set("access-control-allow-headers", "content-type,x-api-key,authorization,x-request-id");
+  headers.set("vary", "Origin");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers
   });
+}
+
+function resolveSessionSecret(env: Env): string | undefined {
+  return env.SESSION_TOKEN_SECRET ?? env.API_KEY;
 }

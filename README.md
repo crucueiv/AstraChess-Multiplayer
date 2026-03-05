@@ -29,19 +29,17 @@ npm test              # backend automated tests
 npm run web:dev       # frontend dev
 npm run web:build     # frontend production build
 npm run web:preview   # frontend preview
+npm run test:e2e      # e2e multiplayer smoke tests
+npm run test:load     # load/resilience tests
 npm run deploy        # backend deploy
 ```
 
-## Frontend plan in this repo
+## Frontend status in this repo
 
-Current frontend is a scaffold in `apps/web` with environment-based API target:
+Current frontend in `apps/web` includes:
 - `VITE_API_BASE_URL` for backend base URL
-- automatic GitHub Pages base path when `GITHUB_PAGES=true`
-
-Next frontend implementation steps:
-1. Build matchmaking and room screens
-2. Integrate websocket state flow
-3. Add reconnect UX and error states
+- local controls for session token creation, matchmaking join, status polling, room connect/reconnect, and protocol error simulation
+- network log panel for local debugging
 
 ## Backend status
 
@@ -49,17 +47,30 @@ Completed backend milestones:
 - [x] Message contract alignment with AstraChess/arcade conventions
 - [x] Authoritative room command handling
 - [x] Matchmaking expansion (timeout, cancel, rematch)
+- [x] Matchmaking status persistence + polling endpoint (`/matchmaking/status`)
 - [x] Room persistence/recovery strategy
 - [x] Automated Durable Object behavior tests
+- [x] Token-based client auth for protected routes (`/matchmaking/*`, `/room/*`)
 - [x] Minimal auth + observability scaffolding
 
 ## Auth and observability
 
-- Protected routes (`/matchmaking/*`, `/room/*`) require `x-api-key` matching Worker `API_KEY`.
+- Browser clients should use a per-client session token for `/matchmaking/*` and `/room/*` (Bearer header or `access_token` query param), not a shared API key.
+- `x-api-key` is for trusted bootstrap/server-side usage, primarily `POST /auth/session` to mint a player session token.
+- Matchmaking lifecycle: call `POST /matchmaking/join`; if the response is `queued`, keep polling `GET /matchmaking/status?requestId=...` until a terminal state (`matched`, `cancelled`, or `timed_out`).
 - `/health` remains public.
 - Structured logs are emitted for matchmaking and room lifecycle events.
 - Room and matchmaking `/health` responses include basic counters.
-- Configure key locally via `.dev.vars` (`API_KEY=...`) and in production via `wrangler secret put API_KEY`.
+- CORS is enabled for web dev calls and responses include `x-request-id` + `x-protocol-version`.
+- Configure local `.dev.vars` with `API_KEY=...` and (recommended) `SESSION_TOKEN_SECRET=...`.
+
+### Local test flow (2 players)
+
+1. Start backend: `npm run dev`.
+2. Mint two session tokens via `POST /auth/session` using `x-api-key` (one token per `playerId`).
+3. Player 1: `POST /matchmaking/join` with token; if `queued`, poll `GET /matchmaking/status?requestId=...`.
+4. Player 2: `POST /matchmaking/join` with its own token; both clients should reach `matched` with the same `roomId`.
+5. Connect each player to `/room/{roomId}` with their own token (`access_token` in query for WebSocket).
 
 ## Deploy model
 
@@ -108,7 +119,8 @@ Completed backend milestones:
    - `ASTRACHESS_ENGINE_URL=<engine endpoint>`
    - `ARCADE_LINK_URL=<arcade-link endpoint>`
    - `PROTOCOL_VERSION=v1`
-   - `API_KEY=<server-side key for protected routes>`
+   - `API_KEY=<bootstrap key for /auth/session>`
+   - `SESSION_TOKEN_SECRET=<token signing secret for client sessions>`
 
 3. **Define and freeze shared contracts**
    - Keep TS contracts in `packages/contracts`.

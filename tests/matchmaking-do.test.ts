@@ -14,6 +14,11 @@ async function post(doInstance: MatchmakingDO, path: string, body: Record<string
   return response.json();
 }
 
+async function get(doInstance: MatchmakingDO, path: string): Promise<any> {
+  const response = await doInstance.fetch(new Request(`https://do.internal${path}`));
+  return response.json();
+}
+
 test("join queues then matches two players", async () => {
   const state = new MockDurableState();
   const instance = new MatchmakingDO(state as any);
@@ -29,6 +34,27 @@ test("join queues then matches two players", async () => {
   assert.deepEqual(second.players, ["p1", "p2"]);
 });
 
+test("persists queued and matched status by request and player", async () => {
+  const state = new MockDurableState();
+  const instance = new MatchmakingDO(state as any);
+
+  const first = await post(instance, "/join", { playerId: "p1", requestId: "req-1" });
+  const queued = await get(instance, "/status?requestId=req-1");
+  assert.equal(first.requestId, "req-1");
+  assert.equal(queued.found, true);
+  assert.equal(queued.status, "queued");
+
+  await post(instance, "/join", { playerId: "p2", requestId: "req-2" });
+  const matchedByRequest = await get(instance, "/status?requestId=req-1");
+  const matchedByPlayer = await get(instance, "/status?playerId=p2");
+  assert.equal(matchedByRequest.found, true);
+  assert.equal(matchedByRequest.status, "matched");
+  assert.ok(matchedByRequest.roomId);
+  assert.equal(matchedByPlayer.found, true);
+  assert.equal(matchedByPlayer.requestId, "req-2");
+  assert.equal(matchedByPlayer.status, "matched");
+});
+
 test("cancel removes queued request", async () => {
   const state = new MockDurableState();
   const instance = new MatchmakingDO(state as any);
@@ -37,6 +63,23 @@ test("cancel removes queued request", async () => {
   const cancelled = await post(instance, "/cancel", { playerId: "p1", requestId: first.requestId });
   assert.equal(cancelled.cancelled, true);
   assert.equal(cancelled.status, "cancelled");
+  const status = await get(instance, `/status?requestId=${first.requestId as string}`);
+  assert.equal(status.found, true);
+  assert.equal(status.status, "cancelled");
+});
+
+test("timeout status is persisted", async () => {
+  const state = new MockDurableState();
+  const instance = new MatchmakingDO(state as any);
+  await state.storage.put("queue", [{ playerId: "p-timeout", requestId: "req-timeout", createdAt: Date.now() - 31_000 }]);
+
+  const cancelled = await post(instance, "/cancel", { playerId: "p-timeout", requestId: "req-timeout" });
+  assert.equal(cancelled.cancelled, false);
+  assert.equal(cancelled.status, "timed_out");
+
+  const status = await get(instance, "/status?requestId=req-timeout");
+  assert.equal(status.found, true);
+  assert.equal(status.status, "timed_out");
 });
 
 test("rematch waits then matches", async () => {
