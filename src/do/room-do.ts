@@ -6,6 +6,7 @@ import type {
   ProtocolErrorCode,
   ServerEvent
 } from "../domain/messages";
+import { attachArcadeLinkSession, validateMoveWithEngine } from "../integrations/native-clients";
 
 type RoomSession = {
   playerId: string;
@@ -44,7 +45,10 @@ export class RoomDO {
     legalMoves: []
   };
 
-  constructor(private readonly durableState: DurableObjectState) {}
+  constructor(
+    private readonly durableState: DurableObjectState,
+    private readonly env?: { ASTRACHESS_ENGINE_URL?: string; ARCADE_LINK_URL?: string }
+  ) {}
 
   async fetch(request: Request): Promise<Response> {
     await this.ensureHydrated();
@@ -143,7 +147,15 @@ export class RoomDO {
       }
       this.slotAssignments.set(playerId, session.slot);
       void this.persistSlotAssignments();
-      this.log("join", { playerId, slot: session.slot, reconnect: isReconnect });
+      const requestId = crypto.randomUUID();
+      void attachArcadeLinkSession(this.env ?? {}, requestId, {
+        roomId: this.state.roomId || "room",
+        playerId,
+        reconnectToken: `${playerId}:${requestId}`
+      }).catch((error: unknown) => {
+        this.log("error", { playerId, code: "INTERNAL_ERROR", message: String(error) });
+      });
+      this.log("join", { playerId, slot: session.slot, reconnect: isReconnect, requestId });
       this.sendWelcome(playerId, session.slot);
       return;
     }
@@ -151,11 +163,15 @@ export class RoomDO {
     if (event.type === "move") {
       this.moveCount += 1;
       this.log("move", { playerId, seq: event.seq ?? null });
-      this.handleMove(playerId, event.seq, event.move);
+      void this.handleMove(playerId, event.seq, event.move);
     }
   }
 
-  private handleMove(playerId: string, seq: number | undefined, move: { fromRow: number; fromCol: number; toRow: number; toCol: number }): void {
+  private async handleMove(
+    playerId: string,
+    seq: number | undefined,
+    move: { fromRow: number; fromCol: number; toRow: number; toCol: number }
+  ): Promise<void> {
     const session = this.sessions.get(playerId);
     const slot = session?.slot;
     if (!slot) {
@@ -178,9 +194,23 @@ export class RoomDO {
       return;
     }
 
-    void move;
+    const requestId = crypto.randomUUID();
+    const engineDecision = await validateMoveWithEngine(this.env ?? {}, requestId, {
+      roomId: this.state.roomId || "room",
+      playerId,
+      seq: this.state.seq,
+      move,
+      state: this.state
+    });
+    if (engineDecision && !engineDecision.accepted) {
+      this.sendProtocolError(playerId, "INVALID_MOVE", engineDecision.reason ?? "Move rejected by engine.");
+      return;
+    }
     this.state.seq += 1;
     this.state.turn = this.state.turn === "P1" ? "P2" : "P1";
+    if (engineDecision?.nextState && typeof engineDecision.nextState === "object") {
+      Object.assign(this.state, engineDecision.nextState);
+    }
     this.lastMoveBy = slot;
     void this.persistSnapshot();
     const stateEvent: ServerEvent = {

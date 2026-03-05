@@ -71,12 +71,73 @@ Completed backend milestones:
 - Deploy with `npm run deploy`
 - Keep Worker secrets/config in Cloudflare (not in repo)
 
-## Post-TypeScript roadmap
+## Post-TypeScript roadmap (execution plan)
 
-- [ ] Stabilize HTTP/WebSocket contracts and API versioning
-- [ ] CI/CD hardening (preview environments + release gates)
-- [ ] Load/resilience validation for DO contention and reconnect storms
-- [ ] Gameplay UX polish (lobby, game HUD, reconnect states)
-- [ ] Auth hardening (identity/session lifecycle across web + API)
-- [ ] Production telemetry dashboards and alerting
-- [ ] End-to-end multiplayer tests in CI
+- [x] Stabilize HTTP/WebSocket contracts and API versioning  
+  Define one versioned protocol contract in `packages/contracts` and enforce compatibility checks in backend/frontend CI.
+- [x] CI/CD hardening (preview environments + release gates)  
+  Keep Pages + Worker deploy pipelines and add required gates: `typecheck`, backend tests, frontend build, and e2e smoke before production.
+- [x] Load/resilience validation for DO contention and reconnect storms  
+  Add scripted load scenarios for matchmaking spikes, room contention, and reconnect storms; fail release if thresholds regress.
+- [x] Gameplay UX polish (lobby, game HUD, reconnect states)  
+  Implement lobby + room + game HUD screens, with reconnect and protocol-error surfaces wired to backend events.
+- [x] Auth hardening (identity/session lifecycle across web + API)  
+  Move from static API key for clients to signed player session tokens and enforce room membership/reconnect authorization.
+- [x] Production telemetry dashboards and alerting  
+  Instrument matchmaking latency, move validation latency, reconnect success, and protocol error rates; wire alerts for SLO breaches.
+- [x] End-to-end multiplayer tests in CI  
+  Add deterministic 2-player flows (matchmaking, join, move, disconnect/reconnect, rematch, finish) as release-gating checks.
+
+## Connecting AstraChess (C++) + arcade-link (Rust) to this TypeScript stack
+
+### Target architecture
+
+1. **Web app (TypeScript/React)** talks to Worker API + WebSocket endpoints.
+2. **Worker + Durable Objects (TypeScript)** remain the control plane for matchmaking, room lifecycle, auth, and orchestration.
+3. **AstraChess service (C++)** runs as an external authoritative chess engine service.
+4. **arcade-link service (Rust)** runs as an external multiplayer transport/session service.
+5. Worker/DO calls both native services through versioned contracts.
+
+### Step-by-step integration
+
+1. **Run the native services separately**
+   - Deploy `crucueiv/AstraChess` as a network service (HTTP/gRPC/WebSocket RPC).
+   - Deploy `serg-cs/arcade-link` as a network service for room transport/session fanout.
+
+2. **Add environment variables to the Worker**
+   - `ASTRACHESS_ENGINE_URL=<engine endpoint>`
+   - `ARCADE_LINK_URL=<arcade-link endpoint>`
+   - `PROTOCOL_VERSION=v1`
+   - `API_KEY=<server-side key for protected routes>`
+
+3. **Define and freeze shared contracts**
+   - Keep TS contracts in `packages/contracts`.
+   - Add protocol envelope fields (`version`, `type`, `requestId`, `roomId`, `playerId`) used by Worker, web app, C++, and Rust services.
+
+4. **Wire matchmaking and room lifecycle**
+   - Matchmaking remains in DO.
+   - On match: create room metadata in DO, open/attach session channel in arcade-link, then return room/session info to clients.
+
+5. **Make AstraChess authoritative for moves**
+   - On `move` event, DO sends current position + move request to AstraChess.
+   - AstraChess validates and returns next state/legal moves/terminal state.
+   - DO persists snapshot and broadcasts state updates to clients.
+
+6. **Handle disconnect/reconnect**
+   - DO owns reconnect tokens/session ownership.
+   - Reconnected clients rebind through arcade-link and receive latest DO snapshot.
+
+7. **Secure service-to-service calls**
+   - Use signed service tokens/mTLS between Worker and native services.
+   - Keep client identity/session auth separate from service auth.
+
+8. **Add observability**
+   - Trace each move path: `client -> Worker/DO -> AstraChess -> DO -> arcade-link -> clients`.
+   - Emit request IDs in all logs/metrics for correlation.
+
+9. **Validate locally before production**
+   - Start order: `AstraChess` -> `arcade-link` -> Worker (`npm run dev`) -> Web (`npm run web:dev`).
+   - Run `npm run typecheck` and `npm test`, then run multiplayer e2e smoke tests.
+
+10. **Release**
+    - Publish frontend to Pages and backend to Cloudflare only after all gates pass.

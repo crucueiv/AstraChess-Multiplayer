@@ -12,6 +12,7 @@ function createEnv(apiKey?: string) {
   };
   return {
     API_KEY: apiKey,
+    SESSION_TOKEN_SECRET: "session-secret",
     MATCHMAKING_DO: namespace,
     ROOM_DO: namespace
   } as any;
@@ -44,6 +45,33 @@ test("protected routes reject wrong key and allow correct key", async () => {
     new Request("https://example.com/matchmaking/join", {
       method: "POST",
       headers: { "x-api-key": "secret" }
+    }),
+    createEnv("secret")
+  );
+  assert.equal(ok.status, 200);
+});
+
+test("session token can access protected routes", async () => {
+  const tokenResponse = await worker.fetch(
+    new Request("https://example.com/auth/session", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "secret"
+      },
+      body: JSON.stringify({ playerId: "p1" })
+    }),
+    createEnv("secret")
+  );
+  assert.equal(tokenResponse.status, 200);
+  const { token } = (await tokenResponse.json()) as { token: string };
+
+  const ok = await worker.fetch(
+    new Request("https://example.com/matchmaking/join", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`
+      }
     }),
     createEnv("secret")
   );

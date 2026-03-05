@@ -18,3 +18,46 @@ body {
 code {
   color: #80d0ff;
 }
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.panel {
+  border: 1px solid #2e3342;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 12px;
+  background: #171b24;
+}
+
+button {
+  background: #2a4266;
+  color: #f3f5f8;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+input {
+  display: block;
+  margin-top: 8px;
+  padding: 8px;
+  width: 100%;
+  max-width: 320px;
+  background: #0f1420;
+  border: 1px solid #2e3342;
+  color: #f3f5f8;
+  border-radius: 6px;
+}
+
+.error {
+  color: #ff8d8d;
+}
+
+.ok {
+  color: #8ee7a7;
+}

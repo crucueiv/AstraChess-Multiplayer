@@ -14,9 +14,14 @@
     "api:deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:e2e": "tsx --test tests/e2e-*.test.ts",
+    "test:load": "tsx --test tests/load-*.test.ts",
     "web:dev": "npm --prefix apps/web run dev",
     "web:build": "npm --prefix apps/web run build",
     "web:preview": "npm --prefix apps/web run preview"
+  },
+  "dependencies": {
+    "@astrachess/contracts": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260303.0",

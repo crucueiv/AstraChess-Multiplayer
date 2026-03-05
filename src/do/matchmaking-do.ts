@@ -45,6 +45,7 @@ export class MatchmakingDO {
         await this.state.storage.put(QUEUE_STORAGE_KEY, dedupedQueue);
         const roomId = `${first.playerId}-${second.playerId}-${Date.now()}`;
         const response = {
+          protocolVersion: PROTOCOL_VERSION,
           matched: true,
           roomId,
           players: [first.playerId, second.playerId],
@@ -56,6 +57,7 @@ export class MatchmakingDO {
 
       await this.state.storage.put(QUEUE_STORAGE_KEY, dedupedQueue);
       const response = {
+        protocolVersion: PROTOCOL_VERSION,
         matched: false,
         status: "queued",
         requestId,
@@ -118,6 +120,7 @@ export class MatchmakingDO {
         await this.state.storage.put(storageKey, dedupedQueue);
         const roomId = `${body.roomId}-rematch-${now}`;
         const response = {
+          protocolVersion: PROTOCOL_VERSION,
           matched: true,
           roomId,
           players: [first.playerId, second.playerId],
@@ -129,6 +132,7 @@ export class MatchmakingDO {
 
       await this.state.storage.put(storageKey, dedupedQueue);
       const response = {
+        protocolVersion: PROTOCOL_VERSION,
         matched: false,
         status: "waiting_rematch",
         requestId,
@@ -142,6 +146,8 @@ export class MatchmakingDO {
     if (request.method === "GET" && pathname === "/health") {
       return Response.json({
         ok: true,
+        protocolVersion: PROTOCOL_VERSION,
+        queueDepth: ((await this.state.storage.get<QueueEntry[]>(QUEUE_STORAGE_KEY)) ?? []).length,
         counters: {
           join: this.joinCount,
           cancel: this.cancelCount,
@@ -170,3 +176,4 @@ export class MatchmakingDO {
     console.log(JSON.stringify({ component: "matchmaking", event, ...data }));
   }
 }
+import { PROTOCOL_VERSION } from "@astrachess/contracts";
