@@ -16,8 +16,6 @@ The project is organized to let you work from any device using GitHub web tools 
 - `tests/`: backend automated tests
 - `apps/web/`: new frontend React + Vite app
 - `packages/contracts/`: shared TypeScript contracts for API/frontend alignment
-- `.github/workflows/ci.yml`: repo validation (typecheck, tests, frontend build)
-- `.github/workflows/pages.yml`: frontend deploy to GitHub Pages
 
 ## Commands
 
@@ -75,8 +73,7 @@ Completed backend milestones:
 ## Deploy model
 
 ### Frontend (GitHub Pages)
-- Workflow: `.github/workflows/pages.yml`
-- Builds `apps/web` and publishes `apps/web/dist`
+- Build locally with `npm run web:build` until workflows are reintroduced.
 
 ### Backend (Cloudflare)
 - Deploy with `npm run deploy`
@@ -128,12 +125,13 @@ Completed backend milestones:
 
 4. **Wire matchmaking and room lifecycle**
    - Matchmaking remains in DO.
-   - On match: create room metadata in DO, open/attach session channel in arcade-link, then return room/session info to clients.
+   - On match: create room metadata in DO, call AstraChess `POST /games/create` for that `roomId`, open/attach session channel in arcade-link, then return room/session info to clients.
 
 5. **Make AstraChess authoritative for moves**
-   - On `move` event, DO sends current position + move request to AstraChess.
+   - On `move` event, DO sends move request to AstraChess `POST /moves/validate` with `roomId`, `playerId`, `seq`, and move coordinates.
    - AstraChess validates and returns next state/legal moves/terminal state.
    - DO persists snapshot and broadcasts state updates to clients.
+   - Optional sync/debug endpoint: use AstraChess `GET /games/state?roomId=...` to inspect authoritative room state.
 
 6. **Handle disconnect/reconnect**
    - DO owns reconnect tokens/session ownership.
