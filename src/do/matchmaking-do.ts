@@ -33,7 +33,10 @@ export class MatchmakingDO {
   private rematchCount = 0;
   private timeoutCount = 0;
 
-  constructor(private readonly state: DurableObjectState) {}
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env?: { ASTRACHESS_ENGINE_URL?: string }
+  ) {}
 
   async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
@@ -56,6 +59,20 @@ export class MatchmakingDO {
         const second = dedupedQueue.shift()!;
         await this.state.storage.put(QUEUE_STORAGE_KEY, dedupedQueue);
         const roomId = `${first.playerId}-${second.playerId}-${Date.now()}`;
+        const requestIdForEngine = crypto.randomUUID();
+        void createGameWithEngine(this.env ?? {}, requestIdForEngine, {
+          roomId,
+          players: [first.playerId, second.playerId]
+        }).catch((error: unknown) => {
+          console.error(
+            JSON.stringify({
+              component: "matchmaking",
+              event: "engine_create_error",
+              roomId,
+              message: String(error)
+            })
+          );
+        });
         await Promise.all([
           this.setRequestStatus(first.requestId, first.playerId, "matched", now, roomId),
           this.setRequestStatus(second.requestId, second.playerId, "matched", now, roomId)
@@ -243,3 +260,4 @@ export class MatchmakingDO {
   }
 }
 import { PROTOCOL_VERSION } from "@astrachess/contracts";
+import { createGameWithEngine } from "../integrations/native-clients";

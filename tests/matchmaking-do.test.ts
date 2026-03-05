@@ -95,3 +95,26 @@ test("rematch waits then matches", async () => {
   assert.ok(second.roomId);
   assert.deepEqual(second.players, ["p1", "p2"]);
 });
+
+test("creates engine game on match when engine URL configured", async () => {
+  const state = new MockDurableState();
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    calls.push({
+      url: String(input),
+      body: init?.body ? JSON.parse(String(init.body)) : null
+    });
+    return Response.json({ ok: true });
+  }) as typeof fetch;
+  try {
+    const instance = new MatchmakingDO(state as any, { ASTRACHESS_ENGINE_URL: "https://engine.local" });
+    await post(instance, "/join", { playerId: "p1" });
+    await post(instance, "/join", { playerId: "p2" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://engine.local/games/create");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

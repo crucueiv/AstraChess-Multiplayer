@@ -61,3 +61,12 @@ input {
 .ok {
   color: #8ee7a7;
 }
+
+.board {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.5;
+  background: #0f1420;
+  border: 1px solid #2e3342;
+  border-radius: 6px;
+  padding: 12px;
+}

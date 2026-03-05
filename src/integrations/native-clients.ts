@@ -5,6 +5,15 @@ type NativeEnv = {
   ARCADE_LINK_URL?: string;
 };
 
+type EngineCreateRequest = {
+  roomId: string;
+  players: [string, string];
+};
+
+type EngineCreateResponse = {
+  initialState?: unknown;
+};
+
 export async function validateMoveWithEngine(
   env: NativeEnv,
   requestId: string,
@@ -46,4 +55,26 @@ export async function attachArcadeLinkSession(
   if (!response.ok) {
     throw new Error(`arcade-link attach failed (${response.status})`);
   }
+}
+
+export async function createGameWithEngine(
+  env: NativeEnv,
+  requestId: string,
+  payload: EngineCreateRequest
+): Promise<EngineCreateResponse | null> {
+  if (!env.ASTRACHESS_ENGINE_URL) {
+    return null;
+  }
+  const response = await fetch(`${env.ASTRACHESS_ENGINE_URL}/games/create`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": requestId
+    },
+    body: JSON.stringify({ version: PROTOCOL_VERSION, ...payload })
+  });
+  if (!response.ok) {
+    throw new Error(`Engine create failed (${response.status})`);
+  }
+  return (await response.json()) as EngineCreateResponse;
 }

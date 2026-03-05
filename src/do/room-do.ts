@@ -2,11 +2,12 @@ import type {
   ClientEvent,
   FinishedPayload,
   GameState,
+  PieceSnapshot,
   PlayerSlot,
   ProtocolErrorCode,
   ServerEvent
 } from "../domain/messages";
-import { attachArcadeLinkSession, validateMoveWithEngine } from "../integrations/native-clients";
+import { attachArcadeLinkSession, createGameWithEngine, validateMoveWithEngine } from "../integrations/native-clients";
 
 type RoomSession = {
   playerId: string;
@@ -147,6 +148,7 @@ export class RoomDO {
       }
       this.slotAssignments.set(playerId, session.slot);
       void this.persistSlotAssignments();
+      void this.initializeGameIfReady();
       const requestId = crypto.randomUUID();
       void attachArcadeLinkSession(this.env ?? {}, requestId, {
         roomId: this.state.roomId || "room",
@@ -343,7 +345,56 @@ export class RoomDO {
     await this.durableState.storage.put(SLOT_ASSIGNMENTS_STORAGE_KEY, data);
   }
 
+  private async initializeGameIfReady(): Promise<void> {
+    const p1 = this.ownerOfSlot("P1");
+    const p2 = this.ownerOfSlot("P2");
+    if (!p1 || !p2 || this.state.pieces.length > 0 || this.state.seq > 0) {
+      return;
+    }
+    const requestId = crypto.randomUUID();
+    let created: { initialState?: unknown } | null = null;
+    try {
+      created = await createGameWithEngine(this.env ?? {}, requestId, {
+        roomId: this.state.roomId || "room",
+        players: [p1, p2]
+      });
+    } catch (error: unknown) {
+      this.log("error", { code: "INTERNAL_ERROR", message: String(error), requestId });
+    }
+    if (created?.initialState && typeof created.initialState === "object") {
+      Object.assign(this.state, created.initialState);
+    }
+    if (this.state.pieces.length === 0) {
+      this.state.pieces = createDefaultPieces();
+      this.state.turn = "P1";
+      this.state.seq = 0;
+    }
+    await this.persistSnapshot();
+    this.broadcast({
+      type: "state",
+      seq: this.state.seq,
+      state: this.state,
+      last_move_by: this.lastMoveBy,
+      finished: this.currentFinished()
+    });
+  }
+
   private log(event: "join" | "move" | "error", data: Record<string, unknown>): void {
     console.log(JSON.stringify({ component: "room", roomId: this.state.roomId, event, ...data }));
   }
+}
+
+function createDefaultPieces(): PieceSnapshot[] {
+  const pieces: PieceSnapshot[] = [];
+  for (let col = 1; col <= 8; col += 1) {
+    pieces.push({ row: 2, col, type: "pawn", color: "white", customTypeId: "" });
+    pieces.push({ row: 7, col, type: "pawn", color: "black", customTypeId: "" });
+  }
+  const backline: Array<PieceSnapshot["type"]> = ["rook", "knight", "bishop", "queen", "king", "bishop", "knight", "rook"];
+  for (let col = 1; col <= 8; col += 1) {
+    const type = backline[col - 1];
+    pieces.push({ row: 1, col, type, color: "white", customTypeId: "" });
+    pieces.push({ row: 8, col, type, color: "black", customTypeId: "" });
+  }
+  return pieces;
 }
